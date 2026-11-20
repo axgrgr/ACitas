@@ -1,0 +1,77 @@
+﻿@page "/crear-cuenta-local"
+@using System.ComponentModel.DataAnnotations
+@using Microsoft.AspNetCore.Identity
+@inject UserManager<IdentityUser> UserManager
+@inject IWebHostEnvironment Environment
+
+<h3>Crear cuenta local del dueño</h3>
+
+@if (!Environment.IsDevelopment())
+{
+    <p>Esta opción solo está disponible durante el desarrollo local.</p>
+}
+else if (creada)
+{
+    <p class="text-success">Cuenta creada. Ya puedes entrar desde <a href="/Account/Login">Iniciar sesión</a>.</p>
+}
+else
+{
+    <EditForm Model="datos" OnValidSubmit="CrearCuenta">
+        <DataAnnotationsValidator />
+        <ValidationSummary />
+
+        <div class="mb-3">
+            <label>Correo</label>
+            <InputText class="form-control" @bind-Value="datos.Email" />
+        </div>
+
+        <div class="mb-3">
+            <label>Contraseña</label>
+            <InputText class="form-control" type="password" @bind-Value="datos.Password" />
+        </div>
+
+        <button class="btn btn-primary" type="submit">Crear cuenta</button>
+    </EditForm>
+
+    @if (!string.IsNullOrWhiteSpace(error))
+    {
+        <p class="text-danger mt-3">@error</p>
+    }
+}
+
+@code {
+    private Registro datos = new();
+    private bool creada;
+    private string? error;
+
+    private async Task CrearCuenta()
+    {
+        if (!Environment.IsDevelopment())
+            return;
+
+        var usuario = new IdentityUser
+        {
+            UserName = datos.Email,
+            Email = datos.Email
+        };
+
+        var resultado = await UserManager.CreateAsync(usuario, datos.Password);
+
+        if (resultado.Succeeded)
+        {
+            creada = true;
+            return;
+        }
+
+        error = string.Join(" ", resultado.Errors.Select(e => e.Description));
+    }
+
+    private sealed class Registro
+    {
+        [Required, EmailAddress]
+        public string Email { get; set; } = "";
+
+        [Required, MinLength(8)]
+        public string Password { get; set; } = "";
+    }
+}
