@@ -175,6 +175,10 @@
             {
                 Folio = Guid.NewGuid(),
                 ClienteId = cliente.ClienteId,
+                NombreCliente = formulario.Nombre.Trim(),
+                CorreoCliente = string.IsNullOrWhiteSpace(formulario.Correo)
+                    ? null
+                    : formulario.Correo.Trim(),
                 ServicioId = formulario.ServicioId,
                 FechaHoraInicio = fechaHora,
                 Estado = "Pendiente",

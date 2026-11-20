@@ -1,0 +1,176 @@
+﻿@page "/admin/servicios"
+@attribute [Authorize]
+
+@using System.ComponentModel.DataAnnotations
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.EntityFrameworkCore
+@using ACitas.Data
+@using ACitas.Models
+
+@inject IDbContextFactory<ACitasContext> DbFactory
+
+<h1>Administrar servicios</h1>
+<p>Agrega servicios y activa o desactiva los que ofreces.</p>
+
+@if (!string.IsNullOrWhiteSpace(aviso))
+{
+    <div class="alert alert-success">@aviso</div>
+}
+
+@if (!string.IsNullOrWhiteSpace(error))
+{
+    <div class="alert alert-danger">@error</div>
+}
+
+<div class="card p-3 mb-4">
+    <h4>Agregar servicio</h4>
+
+    <EditForm Model="nuevo" OnValidSubmit="Guardar" FormName="GuardarServicio">
+        <DataAnnotationsValidator />
+        <ValidationSummary />
+
+        <div class="mb-3">
+            <label>Nombre</label>
+            <InputText class="form-control" @bind-Value="nuevo.Nombre" />
+        </div>
+
+        <div class="mb-3">
+            <label>Descripción</label>
+            <InputTextArea class="form-control" @bind-Value="nuevo.Descripcion" />
+        </div>
+
+        <div class="mb-3">
+            <label>Duración en minutos</label>
+            <InputNumber class="form-control" @bind-Value="nuevo.DuracionMinutos" />
+        </div>
+
+        <div class="mb-3">
+            <label>Precio</label>
+            <InputNumber class="form-control" @bind-Value="nuevo.Precio" />
+        </div>
+
+        <button class="btn btn-primary" type="submit">Guardar servicio</button>
+    </EditForm>
+</div>
+
+<h4>Servicios registrados</h4>
+
+@if (servicios.Count == 0)
+{
+    <p>Aún no hay servicios registrados.</p>
+}
+else
+{
+    <table class="table">
+        <thead>
+            <tr>
+                <th>Servicio</th>
+                <th>Duración</th>
+                <th>Precio</th>
+                <th>Estado</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var servicio in servicios)
+            {
+                <tr>
+                    <td>
+                        <strong>@servicio.Nombre</strong><br />
+                        <small>@servicio.Descripcion</small>
+                    </td>
+                    <td>@servicio.DuracionMinutos min</td>
+                    <td>@($"{servicio.Precio:C}")</td>
+                    <td>@(servicio.Activo ? "Activo" : "Inactivo")</td>
+                    <td>
+                        <button class="btn btn-sm btn-outline-primary"
+                                @onclick="() => CambiarEstado(servicio.ServicioId)">
+                            @(servicio.Activo ? "Desactivar" : "Activar")
+                        </button>
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+@code {
+    private List<Servicio> servicios = new();
+    [SupplyParameterFromForm]
+    private ServicioForm nuevo { get; set; } =
+    new() { DuracionMinutos = 30, Precio = 1 };
+    private string? aviso;
+    private string? error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await CargarServicios();
+    }
+
+    private async Task CargarServicios()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+
+        servicios = await db.Servicios
+            .AsNoTracking()
+            .OrderBy(s => s.Nombre)
+            .ToListAsync();
+    }
+
+    private async Task Guardar()
+    {
+        aviso = null;
+        error = null;
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+
+        var servicio = new Servicio
+        {
+            Nombre = nuevo.Nombre.Trim(),
+            Descripcion = string.IsNullOrWhiteSpace(nuevo.Descripcion)
+                ? null
+                : nuevo.Descripcion.Trim(),
+            DuracionMinutos = nuevo.DuracionMinutos,
+            Precio = nuevo.Precio,
+            Activo = true
+        };
+
+        db.Servicios.Add(servicio);
+        await db.SaveChangesAsync();
+
+        nuevo = new ServicioForm { DuracionMinutos = 30, Precio = 1 };
+        aviso = "Servicio guardado.";
+        await CargarServicios();
+    }
+
+    private async Task CambiarEstado(int servicioId)
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+
+        var servicio = await db.Servicios.FindAsync(servicioId);
+
+        if (servicio is null)
+            return;
+
+        servicio.Activo = !servicio.Activo;
+        await db.SaveChangesAsync();
+
+        aviso = servicio.Activo ? "Servicio activado." : "Servicio desactivado.";
+        await CargarServicios();
+    }
+
+    private sealed class ServicioForm
+    {
+        [Required(ErrorMessage = "Escribe el nombre del servicio.")]
+        public string Nombre { get; set; } = "";
+
+        public string? Descripcion { get; set; }
+
+        [Range(1, 480, ErrorMessage = "La duración debe ser de 1 a 480 minutos.")]
+        public short DuracionMinutos { get; set; }
+
+        [Range(typeof(decimal), "0.01", "999999",
+            ErrorMessage = "El precio debe ser mayor que cero.")]
+        public decimal Precio { get; set; }
+    }
+}

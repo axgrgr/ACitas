@@ -32,4 +32,10 @@ public partial class Cita
     public virtual ICollection<Notificacione> Notificaciones { get; set; } = new List<Notificacione>();
 
     public virtual Servicio Servicio { get; set; } = null!;
+
+
+    //agregue estas
+    public string NombreCliente { get; set; } = null!;
+    public string? CorreoCliente { get; set; }
+
 }

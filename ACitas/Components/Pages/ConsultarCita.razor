@@ -69,19 +69,37 @@
             return;
         }
 
-        await using var db = await DbFactory.CreateDbContextAsync();
-
-        cita = await db.Citas
-            .AsNoTracking()
-            .Include(c => c.Cliente)
-            .Include(c => c.Servicio)
-            .FirstOrDefaultAsync(c =>
-                c.Folio == folio &&
-                c.Cliente.Telefono == telefono.Trim());
-
-        if (cita is null)
+        try
         {
-            mensaje = "No encontramos una cita con ese folio y teléfono.";
+            await using var db = await DbFactory.CreateDbContextAsync();
+
+            var encontrada = await db.Citas
+                .AsNoTracking()
+                .Include(c => c.Cliente)
+                .Include(c => c.Servicio)
+                .FirstOrDefaultAsync(c => c.Folio == folio);
+
+            if (encontrada is null)
+            {
+                mensaje = "No existe una cita con ese folio.";
+                return;
+            }
+
+            if (!string.Equals(
+                    encontrada.Cliente.Telefono.Trim(),
+                    telefono.Trim(),
+                    StringComparison.Ordinal))
+            {
+                mensaje = "El folio existe, pero el teléfono no coincide.";
+                return;
+            }
+
+            cita = encontrada;
+            mensaje = "Cita encontrada.";
+        }
+        catch
+        {
+            mensaje = "No se pudo consultar la base de datos. Revisa la ventana Salida de Visual Studio.";
         }
     }
 }
