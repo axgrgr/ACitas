@@ -1,0 +1,87 @@
+﻿@page "/consultar-cita"
+@rendermode InteractiveServer
+@using ACitas.Data
+@using ACitas.Models
+@using Microsoft.EntityFrameworkCore
+@inject IDbContextFactory<ACitasContext> DbFactory
+
+<PageTitle>Consultar cita</PageTitle>
+
+<div class="container mt-4" style="max-width: 700px;">
+    <h1>Consultar mi cita</h1>
+    <p>Escribe el folio que recibiste y el teléfono asociado a la solicitud.</p>
+
+    <div class="mb-3">
+        <label class="form-label">Folio de la cita</label>
+        <input class="form-control" @bind="folioTexto"
+               placeholder="Pega aquí el folio" />
+    </div>
+
+    <div class="mb-3">
+        <label class="form-label">Teléfono de WhatsApp</label>
+        <input class="form-control" @bind="telefono"
+               placeholder="Escribe el mismo teléfono de la solicitud" />
+    </div>
+
+    <button class="btn btn-primary" @onclick="Consultar">
+        Buscar mi cita
+    </button>
+
+    @if (!string.IsNullOrWhiteSpace(mensaje))
+    {
+        <div class="alert alert-info mt-3">@mensaje</div>
+    }
+
+    @if (cita is not null)
+    {
+        <div class="card mt-4">
+            <div class="card-body">
+                <h4>Detalle de la cita</h4>
+                <p><strong>Folio:</strong> @cita.Folio</p>
+                <p><strong>Servicio:</strong> @cita.Servicio.Nombre</p>
+                <p><strong>Fecha y hora:</strong> @cita.FechaHoraInicio.ToString("dd/MM/yyyy HH:mm")</p>
+                <p><strong>Estado:</strong> @cita.Estado</p>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    private string folioTexto = string.Empty;
+    private string telefono = string.Empty;
+    private string? mensaje;
+    private Cita? cita;
+
+    private async Task Consultar()
+    {
+        mensaje = null;
+        cita = null;
+
+        if (!Guid.TryParse(folioTexto.Trim(), out var folio))
+        {
+            mensaje = "Escribe un folio válido.";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(telefono))
+        {
+            mensaje = "Escribe el teléfono usado al solicitar la cita.";
+            return;
+        }
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+
+        cita = await db.Citas
+            .AsNoTracking()
+            .Include(c => c.Cliente)
+            .Include(c => c.Servicio)
+            .FirstOrDefaultAsync(c =>
+                c.Folio == folio &&
+                c.Cliente.Telefono == telefono.Trim());
+
+        if (cita is null)
+        {
+            mensaje = "No encontramos una cita con ese folio y teléfono.";
+        }
+    }
+}

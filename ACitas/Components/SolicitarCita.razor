@@ -1,0 +1,226 @@
+﻿@page "/solicitar-cita"
+@rendermode InteractiveServer
+@using System.ComponentModel.DataAnnotations
+@using ACitas.Data
+@using ACitas.Models
+@using Microsoft.EntityFrameworkCore
+@inject IDbContextFactory<ACitasContext> DbFactory
+
+<PageTitle>Solicitar cita</PageTitle>
+
+<div class="container mt-4" style="max-width: 760px;">
+    <h1>Solicitar una cita</h1>
+    <p>Completa tus datos y elige el servicio y horario que prefieres.</p>
+
+    @if (!string.IsNullOrWhiteSpace(mensajeExito))
+    {
+        <div class="alert alert-success">
+            @mensajeExito
+        </div>
+    }
+    else if (!string.IsNullOrWhiteSpace(mensajeError))
+    {
+        <div class="alert alert-danger">
+            @mensajeError
+        </div>
+    }
+
+    @if (cargando)
+    {
+        <p>Cargando servicios...</p>
+    }
+    else if (servicios.Count == 0)
+    {
+        <div class="alert alert-warning">
+            Aún no hay servicios activos. Primero agrega servicios a la base de datos.
+        </div>
+    }
+    else
+    {
+        <EditForm Model="formulario" OnValidSubmit="GuardarCita">
+            <DataAnnotationsValidator />
+            <ValidationSummary />
+
+            <div class="mb-3">
+                <label class="form-label">Nombre completo</label>
+                <InputText class="form-control" @bind-Value="formulario.Nombre" />
+                <ValidationMessage For="@(() => formulario.Nombre)" />
+            </div>
+
+            <div class="mb-3">
+                <label class="form-label">Teléfono de WhatsApp</label>
+                <InputText class="form-control" @bind-Value="formulario.Telefono" />
+                <ValidationMessage For="@(() => formulario.Telefono)" />
+            </div>
+
+            <div class="mb-3">
+                <label class="form-label">Correo (opcional)</label>
+                <InputText class="form-control" @bind-Value="formulario.Correo" />
+                <ValidationMessage For="@(() => formulario.Correo)" />
+            </div>
+
+            <div class="mb-3">
+                <label class="form-label">Servicio</label>
+                <InputSelect class="form-select" @bind-Value="formulario.ServicioId">
+                    <option value="0">Selecciona un servicio</option>
+                    @foreach (var servicio in servicios)
+                    {
+                        <option value="@servicio.ServicioId">
+                            @servicio.Nombre — @servicio.DuracionMinutos min
+                        </option>
+                    }
+                </InputSelect>
+                <ValidationMessage For="@(() => formulario.ServicioId)" />
+            </div>
+
+            <div class="row">
+                <div class="col-md-6 mb-3">
+                    <label class="form-label">Fecha</label>
+                    <InputDate class="form-control" @bind-Value="formulario.Fecha" />
+                </div>
+
+                <div class="col-md-6 mb-3">
+                    <label class="form-label">Hora</label>
+                    <InputText type="time" class="form-control" @bind-Value="formulario.Hora" />
+                    <ValidationMessage For="@(() => formulario.Hora)" />
+                </div>
+            </div>
+
+            <div class="mb-3">
+                <label class="form-label">Comentario (opcional)</label>
+                <InputTextArea class="form-control" @bind-Value="formulario.Comentario" />
+            </div>
+
+            <button class="btn btn-primary" type="submit" disabled="@guardando">
+                @(guardando ? "Enviando..." : "Solicitar cita")
+            </button>
+        </EditForm>
+    }
+</div>
+
+@code {
+    private List<Servicio> servicios = new();
+    private SolicitudForm formulario = new();
+    private bool cargando = true;
+    private bool guardando;
+    private string? mensajeExito;
+    private string? mensajeError;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+
+        servicios = await db.Servicios
+            .Where(s => s.Activo)
+            .OrderBy(s => s.Nombre)
+            .ToListAsync();
+
+        cargando = false;
+    }
+
+    private async Task GuardarCita()
+    {
+        mensajeError = null;
+        mensajeExito = null;
+
+        if (formulario.ServicioId <= 0)
+        {
+            mensajeError = "Selecciona un servicio.";
+            return;
+        }
+
+        if (!TimeSpan.TryParse(formulario.Hora, out var hora))
+        {
+            mensajeError = "Escribe una hora válida.";
+            return;
+        }
+
+        var fechaHora = formulario.Fecha.Date.Add(hora);
+
+        if (fechaHora <= DateTime.Now)
+        {
+            mensajeError = "Selecciona una fecha y hora futuras.";
+            return;
+        }
+
+        guardando = true;
+
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+
+            var cliente = await db.Clientes
+                .FirstOrDefaultAsync(c => c.Telefono == formulario.Telefono.Trim());
+
+            if (cliente is null)
+            {
+                cliente = new Cliente
+                {
+                    Nombre = formulario.Nombre.Trim(),
+                    Telefono = formulario.Telefono.Trim(),
+                    Correo = string.IsNullOrWhiteSpace(formulario.Correo)
+                        ? null
+                        : formulario.Correo.Trim(),
+                    FechaRegistro = DateTime.Now,
+                    Activo = true
+                };
+
+                db.Clientes.Add(cliente);
+                await db.SaveChangesAsync();
+            }
+
+            var ahora = DateTime.Now;
+
+            var cita = new Cita
+            {
+                Folio = Guid.NewGuid(),
+                ClienteId = cliente.ClienteId,
+                ServicioId = formulario.ServicioId,
+                FechaHoraInicio = fechaHora,
+                Estado = "Pendiente",
+                ComentarioCliente = string.IsNullOrWhiteSpace(formulario.Comentario)
+                    ? null
+                    : formulario.Comentario.Trim(),
+                FechaCreacion = ahora,
+                FechaActualizacion = ahora
+            };
+
+            db.Citas.Add(cita);
+            await db.SaveChangesAsync();
+
+            mensajeExito = $"Solicitud enviada. Tu folio es: {cita.Folio}";
+            formulario = new SolicitudForm();
+        }
+        catch (Exception)
+        {
+            mensajeError = "No se pudo guardar la cita. Revisa la conexión a la base de datos.";
+        }
+        finally
+        {
+            guardando = false;
+        }
+    }
+
+    private sealed class SolicitudForm
+    {
+        [Required(ErrorMessage = "Escribe tu nombre.")]
+        public string Nombre { get; set; } = string.Empty;
+
+        [Required(ErrorMessage = "Escribe tu teléfono.")]
+        [Phone(ErrorMessage = "Escribe un teléfono válido.")]
+        public string Telefono { get; set; } = string.Empty;
+
+        [EmailAddress(ErrorMessage = "Escribe un correo válido.")]
+        public string? Correo { get; set; }
+
+        [Range(1, int.MaxValue, ErrorMessage = "Selecciona un servicio.")]
+        public int ServicioId { get; set; }
+
+        [Required(ErrorMessage = "Escribe la hora.")]
+        public string Hora { get; set; } = string.Empty;
+
+        public DateTime Fecha { get; set; } = DateTime.Today.AddDays(1);
+
+        public string? Comentario { get; set; }
+    }
+}

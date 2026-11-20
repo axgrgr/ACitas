@@ -1,0 +1,204 @@
+﻿@page "/admin/citas"
+@rendermode InteractiveServer
+@using ACitas.Data
+@using ACitas.Models
+@using Microsoft.EntityFrameworkCore
+@inject IDbContextFactory<ACitasContext> DbFactory
+
+    @* agregado por mi (guillen) *@
+@using Microsoft.AspNetCore.Authorization
+@attribute [Authorize]
+
+
+<PageTitle>Administrar citas</PageTitle>
+
+<div class="container mt-4">
+    <h1>Administrar citas</h1>
+    <p>Revisa las solicitudes y cambia su estado.</p>
+
+    @if (!string.IsNullOrWhiteSpace(mensaje))
+    {
+        <div class="alert alert-info">@mensaje</div>
+    }
+
+    @if (cargando)
+    {
+        <p>Cargando citas...</p>
+    }
+    else if (citas.Count == 0)
+    {
+        <div class="alert alert-secondary">Todavía no hay citas registradas.</div>
+    }
+    else
+    {
+        <div class="table-responsive">
+            <table class="table table-striped align-middle">
+                <thead>
+                    <tr>
+                        <th>Fecha y hora</th>
+                        <th>Cliente</th>
+                        <th>Teléfono</th>
+                        <th>Servicio</th>
+                        <th>Estado</th>
+                        <th>Acciones</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var cita in citas)
+                    {
+                        <tr>
+                            <td>@cita.FechaHoraInicio.ToString("dd/MM/yyyy HH:mm")</td>
+                            <td>@cita.Cliente.Nombre</td>
+                            <td>@cita.Cliente.Telefono</td>
+                            <td>@cita.Servicio.Nombre</td>
+                            <td>@cita.Estado</td>
+                            <td>
+                                @if (cita.Estado == "Pendiente" || cita.Estado == "Pospuesta")
+                                {
+                                    <button class="btn btn-sm btn-success me-1"
+                                            @onclick='() => CambiarEstado(cita.CitaId," Aceptada")'>
+                                        Aceptar
+                                    </button>
+
+                                    <button class="btn btn-sm btn-outline-danger me-1"
+                                            @onclick='() => CambiarEstado(cita.CitaId," Rechazada")'>
+                                        Rechazar
+                                    </button>
+
+                                    <button class="btn btn-sm btn-outline-primary"
+                                            @onclick="() => PrepararPosponer(cita)">
+                                        Posponer
+                                    </button>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+
+    @if (citaParaPosponerId.HasValue)
+    {
+        <div class="card p-3 mt-4" style="max-width: 500px;">
+            <h4>Proponer otra fecha</h4>
+
+            <label class="form-label">Nueva fecha</label>
+            <InputDate class="form-control mb-3" @bind-Value="nuevaFecha" />
+
+            <label class="form-label">Nueva hora</label>
+            <InputText type="time" class="form-control mb-3" @bind-Value="nuevaHora" />
+
+            <button class="btn btn-primary me-2" @onclick="GuardarPosposicion">
+                Guardar propuesta
+            </button>
+            <button class="btn btn-secondary" @onclick="CancelarPosponer">
+                Cancelar
+            </button>
+        </div>
+    }
+</div>
+
+@code {
+    private List<Cita> citas = new();
+    private bool cargando = true;
+    private string? mensaje;
+
+    private int? citaParaPosponerId;
+    private DateTime nuevaFecha = DateTime.Today.AddDays(1);
+    private string nuevaHora = "09:00";
+
+    protected override async Task OnInitializedAsync()
+    {
+        await CargarCitas();
+    }
+
+    private async Task CargarCitas()
+    {
+        cargando = true;
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+
+        citas = await db.Citas
+            .Include(c => c.Cliente)
+            .Include(c => c.Servicio)
+            .OrderBy(c => c.FechaHoraInicio)
+            .ToListAsync();
+
+        cargando = false;
+    }
+
+    private async Task CambiarEstado(int citaId, string estado)
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+
+        var cita = await db.Citas.FindAsync(citaId);
+
+        if (cita is null)
+        {
+            mensaje = "No se encontró la cita.";
+            return;
+        }
+
+        cita.Estado = estado;
+        cita.FechaActualizacion = DateTime.Now;
+        await db.SaveChangesAsync();
+
+        mensaje = $"La cita se actualizó a: {estado}.";
+        await CargarCitas();
+    }
+
+    private void PrepararPosponer(Cita cita)
+    {
+        citaParaPosponerId = cita.CitaId;
+        nuevaFecha = cita.FechaHoraInicio.Date;
+        nuevaHora = cita.FechaHoraInicio.ToString("HH:mm");
+        mensaje = null;
+    }
+
+    private async Task GuardarPosposicion()
+    {
+        if (!citaParaPosponerId.HasValue ||
+            !TimeSpan.TryParse(nuevaHora, out var hora))
+        {
+            mensaje = "Selecciona una fecha y hora válidas.";
+            return;
+        }
+
+        var fechaPropuesta = nuevaFecha.Date.Add(hora);
+
+        if (fechaPropuesta <= DateTime.Now)
+        {
+            mensaje = "La nueva fecha debe estar en el futuro.";
+            return;
+        }
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+
+        var cita = await db.Citas.FindAsync(citaParaPosponerId.Value);
+
+        if (cita is null)
+        {
+            mensaje = "No se encontró la cita.";
+            citaParaPosponerId = null;
+            return;
+        }
+
+        cita.FechaHoraInicio = fechaPropuesta;
+        cita.Estado = "Pospuesta";
+        cita.FechaActualizacion = DateTime.Now;
+        cita.NotaDueno = "Se propuso una nueva fecha al cliente.";
+
+        await db.SaveChangesAsync();
+
+        citaParaPosponerId = null;
+        mensaje = "Se guardó la nueva fecha propuesta.";
+        await CargarCitas();
+    }
+
+    private void CancelarPosponer()
+    {
+        citaParaPosponerId = null;
+        mensaje = null;
+    }
+}
