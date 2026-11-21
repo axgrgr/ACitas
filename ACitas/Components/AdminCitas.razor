@@ -55,13 +55,13 @@
                             <td>
                                 @if (cita.Estado == "Pendiente" || cita.Estado == "Pospuesta")
                                 {
-                                    <button class="btn btn-sm btn-success me-1"
-                                            @onclick='() => CambiarEstado(cita.CitaId," Aceptada")'>
+                                    <button class="btn btn-sm btn-success"
+                                            @onclick='() => CambiarEstado(cita.CitaId, "Aceptada")'>
                                         Aceptar
                                     </button>
 
-                                    <button class="btn btn-sm btn-outline-danger me-1"
-                                            @onclick='() => CambiarEstado(cita.CitaId," Rechazada")'>
+                                    <button class="btn btn-sm btn-outline-danger"
+                                            @onclick='() => CambiarEstado(cita.CitaId, "Rechazada")'>
                                         Rechazar
                                     </button>
 
@@ -132,7 +132,9 @@
     {
         await using var db = await DbFactory.CreateDbContextAsync();
 
-        var cita = await db.Citas.FindAsync(citaId);
+        var cita = await db.Citas
+            .Include(c => c.Cliente)
+            .FirstOrDefaultAsync(c => c.CitaId == citaId);
 
         if (cita is null)
         {
@@ -140,11 +142,28 @@
             return;
         }
 
+        estado = estado.Trim();
+    
         cita.Estado = estado;
         cita.FechaActualizacion = DateTime.Now;
+
+        var texto = estado == "Aceptada"
+            ? $"Hola {cita.NombreCliente}, tu cita para el {cita.FechaHoraInicio:dd/MM/yyyy HH:mm} fue aceptada."
+            : $"Hola {cita.NombreCliente}, tu cita para el {cita.FechaHoraInicio:dd/MM/yyyy HH:mm} fue rechazada.";
+
+        db.Notificaciones.Add(new Notificacione
+        {
+            CitaId = cita.CitaId,
+            Canal = "WhatsApp",
+            Destino = cita.Cliente.Telefono,
+            Mensaje = texto,
+            EstadoEnvio = "Pendiente",
+            FechaCreacion = DateTime.Now
+        });
+
         await db.SaveChangesAsync();
 
-        mensaje = $"La cita se actualizó a: {estado}.";
+        mensaje = $"Cita actualizada a: {estado}. Aviso registrado como pendiente.";
         await CargarCitas();
     }
 
@@ -175,7 +194,9 @@
 
         await using var db = await DbFactory.CreateDbContextAsync();
 
-        var cita = await db.Citas.FindAsync(citaParaPosponerId.Value);
+        var cita = await db.Citas
+            .Include(c => c.Cliente)
+            .FirstOrDefaultAsync(c => c.CitaId == citaParaPosponerId.Value);
 
         if (cita is null)
         {
@@ -189,10 +210,24 @@
         cita.FechaActualizacion = DateTime.Now;
         cita.NotaDueno = "Se propuso una nueva fecha al cliente.";
 
+        var texto =
+            $"Hola {cita.NombreCliente}, tu cita fue pospuesta. " +
+            $"La nueva fecha y hora propuesta es {fechaPropuesta:dd/MM/yyyy HH:mm}.";
+
+        db.Notificaciones.Add(new Notificacione
+        {
+            CitaId = cita.CitaId,
+            Canal = "WhatsApp",
+            Destino = cita.Cliente.Telefono,
+            Mensaje = texto,
+            EstadoEnvio = "Pendiente",
+            FechaCreacion = DateTime.Now
+        });
+
         await db.SaveChangesAsync();
 
         citaParaPosponerId = null;
-        mensaje = "Se guardó la nueva fecha propuesta.";
+        mensaje = "Nueva fecha guardada. Aviso registrado como pendiente.";
         await CargarCitas();
     }
 
