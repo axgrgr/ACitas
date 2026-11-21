@@ -61,7 +61,9 @@
 
             <div class="mb-3">
                 <label class="form-label">Servicio</label>
-                <InputSelect class="form-select" @bind-Value="formulario.ServicioId">
+                <InputSelect class="form-select"
+                             @bind-Value="formulario.ServicioId"
+                             @bind-Value:after="ActualizarDisponibilidad">
                     <option value="0">Selecciona un servicio</option>
                     @foreach (var servicio in servicios)
                     {
@@ -73,17 +75,28 @@
                 <ValidationMessage For="@(() => formulario.ServicioId)" />
             </div>
 
-            <div class="row">
-                <div class="col-md-6 mb-3">
-                    <label class="form-label">Fecha</label>
-                    <InputDate class="form-control" @bind-Value="formulario.Fecha" />
-                </div>
+            <div class="col-md-6 mb-3">
+                <label class="form-label">Fecha</label>
+                <InputDate class="form-control"
+                           @bind-Value="formulario.Fecha"
+                           @bind-Value:after="ActualizarDisponibilidad" />
+            </div>
 
-                <div class="col-md-6 mb-3">
-                    <label class="form-label">Hora</label>
-                    <InputText type="time" class="form-control" @bind-Value="formulario.Hora" />
-                    <ValidationMessage For="@(() => formulario.Hora)" />
-                </div>
+            <div class="col-md-6 mb-3">
+                <label class="form-label">Hora disponible</label>
+                <InputSelect class="form-select" @bind-Value="formulario.Hora">
+                    <option value="">Selecciona una hora</option>
+                    @foreach (var horaDisponible in horasDisponibles)
+                    {
+                        <option value="@horaDisponible">@horaDisponible</option>
+                    }
+                </InputSelect>
+                <ValidationMessage For="@(() => formulario.Hora)" />
+
+                @if (!string.IsNullOrWhiteSpace(mensajeDisponibilidad))
+                {
+                    <small class="text-muted">@mensajeDisponibilidad</small>
+                }
             </div>
 
             <div class="mb-3">
@@ -106,6 +119,11 @@
     private string? mensajeExito;
     private string? mensajeError;
 
+    private List<string> horasDisponibles = new();
+    private string? mensajeDisponibilidad;
+
+
+
     protected override async Task OnInitializedAsync()
     {
         await using var db = await DbFactory.CreateDbContextAsync();
@@ -117,6 +135,114 @@
 
         cargando = false;
     }
+
+    private async Task ActualizarDisponibilidad()
+    {
+        horasDisponibles.Clear();
+        formulario.Hora = string.Empty;
+        mensajeDisponibilidad = null;
+
+        if (formulario.ServicioId <= 0)
+        {
+            mensajeDisponibilidad = "Selecciona primero un servicio.";
+            return;
+        }
+
+        if (formulario.Fecha.Date < DateTime.Today)
+        {
+            mensajeDisponibilidad = "Selecciona una fecha de hoy en adelante.";
+            return;
+        }
+
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+
+            var servicio = await db.Servicios
+                .AsNoTracking()
+                .FirstOrDefaultAsync(s =>
+                    s.ServicioId == formulario.ServicioId && s.Activo);
+
+            if (servicio is null || servicio.DuracionMinutos <= 0)
+            {
+                mensajeDisponibilidad = "El servicio seleccionado no está disponible.";
+                return;
+            }
+
+            byte diaSemana = formulario.Fecha.DayOfWeek == DayOfWeek.Sunday
+                ? (byte)7
+                : (byte)formulario.Fecha.DayOfWeek;
+
+            var bloques = await db.Horarios
+                .AsNoTracking()
+                .Where(h => h.Activo && h.DiaSemana == diaSemana)
+                .OrderBy(h => h.HoraInicio)
+                .ToListAsync();
+
+            if (bloques.Count == 0)
+            {
+                mensajeDisponibilidad = "No hay horarios activos para ese día.";
+                return;
+            }
+
+            var inicioDia = formulario.Fecha.Date;
+            var finDia = inicioDia.AddDays(1);
+
+            var citasDelDia = await db.Citas
+                .AsNoTracking()
+                .Include(c => c.Servicio)
+                .Where(c =>
+                    c.FechaHoraInicio >= inicioDia &&
+                    c.FechaHoraInicio < finDia &&
+                    (c.Estado == "Pendiente" ||
+                     c.Estado == "Aceptada" ||
+                     c.Estado == "Pospuesta"))
+                .ToListAsync();
+
+            foreach (var bloque in bloques)
+            {
+                var hora = bloque.HoraInicio;
+
+                while (hora.AddMinutes(servicio.DuracionMinutos) <= bloque.HoraFin)
+                {
+                    var inicioCandidato = formulario.Fecha.Date.Add(hora.ToTimeSpan());
+                    var finCandidato = inicioCandidato.AddMinutes(servicio.DuracionMinutos);
+
+                    bool yaPaso = inicioCandidato <= DateTime.Now;
+
+                    bool seCruzaConCita = citasDelDia.Any(c =>
+                        inicioCandidato <
+                            c.FechaHoraInicio.AddMinutes(c.Servicio.DuracionMinutos) &&
+                        c.FechaHoraInicio < finCandidato);
+
+                    if (!yaPaso && !seCruzaConCita)
+                    {
+                        horasDisponibles.Add(hora.ToString("HH:mm"));
+                    }
+
+                    hora = hora.AddMinutes(servicio.DuracionMinutos);
+                }
+            }
+
+            horasDisponibles = horasDisponibles
+                .Distinct()
+                .OrderBy(h => TimeOnly.Parse(h))
+                .ToList();
+
+            mensajeDisponibilidad = horasDisponibles.Count == 0
+                ? "No hay horas disponibles para esa fecha y servicio."
+                : "Selecciona una hora disponible.";
+        }
+        catch
+        {
+            mensajeDisponibilidad =
+                "No se pudieron cargar los horarios. Revisa la conexión a la base de datos.";
+        }
+    }
+
+
+
+
 
     private async Task GuardarCita()
     {

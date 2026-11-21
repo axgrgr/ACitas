@@ -7,6 +7,10 @@
 @using ACitas.Data
 @using ACitas.Models
 
+@using Microsoft.AspNetCore.Components
+
+
+
 @inject IDbContextFactory<ACitasContext> DbFactory
 
 <PageTitle>Administrar horarios</PageTitle>
@@ -100,7 +104,9 @@ else
 
 @code {
     private List<Horario> horarios = new();
-    private HorarioForm nuevo = new()
+
+    [SupplyParameterFromForm]
+    private HorarioForm nuevo { get; set; } = new()
     {
         DiaSemana = 1,
         HoraInicio = "09:00",
