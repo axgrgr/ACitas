@@ -1,0 +1,222 @@
+﻿@page "/admin/horarios"
+@attribute [Authorize]
+
+@using System.ComponentModel.DataAnnotations
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.EntityFrameworkCore
+@using ACitas.Data
+@using ACitas.Models
+
+@inject IDbContextFactory<ACitasContext> DbFactory
+
+<PageTitle>Administrar horarios</PageTitle>
+
+<h1>Administrar horarios</h1>
+<p>Configura los días y las horas en que aceptas citas.</p>
+
+@if (!string.IsNullOrWhiteSpace(aviso))
+{
+    <div class="alert alert-success">@aviso</div>
+}
+
+@if (!string.IsNullOrWhiteSpace(error))
+{
+    <div class="alert alert-danger">@error</div>
+}
+
+<div class="card p-3 mb-4">
+    <h4>Agregar horario</h4>
+
+    <EditForm Model="nuevo" OnValidSubmit="Guardar" FormName="GuardarHorario">
+        <DataAnnotationsValidator />
+        <ValidationSummary />
+
+        <div class="mb-3">
+            <label>Día</label>
+            <InputSelect class="form-select" @bind-Value="nuevo.DiaSemana">
+                <option value="1">Lunes</option>
+                <option value="2">Martes</option>
+                <option value="3">Miércoles</option>
+                <option value="4">Jueves</option>
+                <option value="5">Viernes</option>
+                <option value="6">Sábado</option>
+                <option value="7">Domingo</option>
+            </InputSelect>
+        </div>
+
+        <div class="mb-3">
+            <label>Hora de inicio</label>
+            <InputText class="form-control" type="time"
+                       @bind-Value="nuevo.HoraInicio" />
+        </div>
+
+        <div class="mb-3">
+            <label>Hora de fin</label>
+            <InputText class="form-control" type="time"
+                       @bind-Value="nuevo.HoraFin" />
+        </div>
+
+        <button class="btn btn-primary" type="submit">Guardar horario</button>
+    </EditForm>
+</div>
+
+<h4>Horarios registrados</h4>
+
+@if (horarios.Count == 0)
+{
+    <p>Aún no hay horarios registrados.</p>
+}
+else
+{
+    <table class="table">
+        <thead>
+            <tr>
+                <th>Día</th>
+                <th>Inicio</th>
+                <th>Fin</th>
+                <th>Estado</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var horario in horarios)
+            {
+                <tr>
+                    <td>@NombreDia(horario.DiaSemana)</td>
+                    <td>@horario.HoraInicio.ToString("HH:mm")</td>
+                    <td>@horario.HoraFin.ToString("HH:mm")</td>
+                    <td>@(horario.Activo ? "Activo" : "Inactivo")</td>
+                    <td>
+                        <button class="btn btn-sm btn-outline-primary"
+                                @onclick="() => CambiarEstado(horario.HorarioId)">
+                            @(horario.Activo ? "Desactivar" : "Activar")
+                        </button>
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+@code {
+    private List<Horario> horarios = new();
+    private HorarioForm nuevo = new()
+    {
+        DiaSemana = 1,
+        HoraInicio = "09:00",
+        HoraFin = "17:00"
+    };
+
+    private string? aviso;
+    private string? error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await CargarHorarios();
+    }
+
+    private async Task CargarHorarios()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+
+        horarios = await db.Horarios
+            .AsNoTracking()
+            .OrderBy(h => h.DiaSemana)
+            .ThenBy(h => h.HoraInicio)
+            .ToListAsync();
+    }
+
+    private async Task Guardar()
+    {
+        aviso = null;
+        error = null;
+
+        if (!TimeOnly.TryParse(nuevo.HoraInicio, out var inicio) ||
+            !TimeOnly.TryParse(nuevo.HoraFin, out var fin))
+        {
+            error = "Escribe una hora de inicio y de fin válidas.";
+            return;
+        }
+
+        if (inicio >= fin)
+        {
+            error = "La hora de fin debe ser posterior a la de inicio.";
+            return;
+        }
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+
+        var seCruza = await db.Horarios.AnyAsync(h =>
+            h.DiaSemana == nuevo.DiaSemana &&
+            h.Activo &&
+            inicio < h.HoraFin &&
+            fin > h.HoraInicio);
+
+        if (seCruza)
+        {
+            error = "Ese horario se cruza con otro horario activo del mismo día.";
+            return;
+        }
+
+        db.Horarios.Add(new Horario
+        {
+            DiaSemana = nuevo.DiaSemana,
+            HoraInicio = inicio,
+            HoraFin = fin,
+            Activo = true
+        });
+
+        await db.SaveChangesAsync();
+
+        nuevo = new HorarioForm
+        {
+            DiaSemana = 1,
+            HoraInicio = "09:00",
+            HoraFin = "17:00"
+        };
+
+        aviso = "Horario guardado.";
+        await CargarHorarios();
+    }
+
+    private async Task CambiarEstado(int horarioId)
+    {
+        aviso = null;
+        error = null;
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var horario = await db.Horarios.FindAsync(horarioId);
+
+        if (horario is null)
+            return;
+
+        horario.Activo = !horario.Activo;
+        await db.SaveChangesAsync();
+
+        aviso = horario.Activo ? "Horario activado." : "Horario desactivado.";
+        await CargarHorarios();
+    }
+
+    private static string NombreDia(byte dia) => dia switch
+    {
+        1 => "Lunes",
+        2 => "Martes",
+        3 => "Miércoles",
+        4 => "Jueves",
+        5 => "Viernes",
+        6 => "Sábado",
+        7 => "Domingo",
+        _ => "Día no válido"
+    };
+
+    private sealed class HorarioForm
+    {
+        public byte DiaSemana { get; set; }
+
+        [Required(ErrorMessage = "Indica la hora de inicio.")]
+        public string HoraInicio { get; set; } = "";
+
+        [Required(ErrorMessage = "Indica la hora de fin.")]
+        public string HoraFin { get; set; } = "";
+    }
+}
