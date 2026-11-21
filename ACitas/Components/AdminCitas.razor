@@ -84,10 +84,23 @@
             <h4>Proponer otra fecha</h4>
 
             <label class="form-label">Nueva fecha</label>
-            <InputDate class="form-control mb-3" @bind-Value="nuevaFecha" />
+            <InputDate class="form-control mb-3"
+                       @bind-Value="nuevaFecha"
+                       @bind-Value:after="CargarHorasPosponer" />
 
-            <label class="form-label">Nueva hora</label>
-            <InputText type="time" class="form-control mb-3" @bind-Value="nuevaHora" />
+            <label class="form-label">Nueva hora disponible</label>
+            <InputSelect class="form-select mb-3" @bind-Value="nuevaHora">
+                <option value="">Selecciona una hora</option>
+                @foreach (var hora in horasPosponerDisponibles)
+                {
+                    <option value="@hora">@hora</option>
+                }
+            </InputSelect>
+
+            @if (!string.IsNullOrWhiteSpace(mensajeHorasPosponer))
+            {
+                <div class="form-text mb-3">@mensajeHorasPosponer</div>
+            }
 
             <button class="btn btn-primary me-2" @onclick="GuardarPosposicion">
                 Guardar propuesta
@@ -107,6 +120,11 @@
     private int? citaParaPosponerId;
     private DateTime nuevaFecha = DateTime.Today.AddDays(1);
     private string nuevaHora = "09:00";
+
+    private List<string> horasPosponerDisponibles = new();
+    private string? mensajeHorasPosponer;
+
+
 
     protected override async Task OnInitializedAsync()
     {
@@ -167,12 +185,14 @@
         await CargarCitas();
     }
 
-    private void PrepararPosponer(Cita cita)
+    private async Task PrepararPosponer(Cita cita)
     {
         citaParaPosponerId = cita.CitaId;
         nuevaFecha = cita.FechaHoraInicio.Date;
-        nuevaHora = cita.FechaHoraInicio.ToString("HH:mm");
+        nuevaHora = string.Empty;
         mensaje = null;
+
+        await CargarHorasPosponer();
     }
 
     private async Task GuardarPosposicion()
@@ -181,6 +201,12 @@
             !TimeSpan.TryParse(nuevaHora, out var hora))
         {
             mensaje = "Selecciona una fecha y hora válidas.";
+            return;
+        }
+
+        if (!horasPosponerDisponibles.Contains(nuevaHora))
+        {
+            mensaje = "Selecciona una hora disponible del horario configurado.";
             return;
         }
 
@@ -236,4 +262,108 @@
         citaParaPosponerId = null;
         mensaje = null;
     }
+
+
+
+    private async Task CargarHorasPosponer()
+    {
+        horasPosponerDisponibles.Clear();
+        nuevaHora = string.Empty;
+        mensajeHorasPosponer = null;
+
+        if (!citaParaPosponerId.HasValue)
+            return;
+
+        if (nuevaFecha.Date < DateTime.Today)
+        {
+            mensajeHorasPosponer = "Selecciona una fecha de hoy en adelante.";
+            return;
+        }
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+
+        var citaActual = await db.Citas
+            .AsNoTracking()
+            .Include(c => c.Servicio)
+            .FirstOrDefaultAsync(c => c.CitaId == citaParaPosponerId.Value);
+
+        if (citaActual is null)
+        {
+            mensajeHorasPosponer = "No se encontró la cita.";
+            return;
+        }
+
+        byte diaSemana = nuevaFecha.DayOfWeek == DayOfWeek.Sunday
+            ? (byte)7
+            : (byte)nuevaFecha.DayOfWeek;
+
+        var bloques = await db.Horarios
+            .AsNoTracking()
+            .Where(h => h.Activo && h.DiaSemana == diaSemana)
+            .OrderBy(h => h.HoraInicio)
+            .ToListAsync();
+
+        if (bloques.Count == 0)
+        {
+            mensajeHorasPosponer = "No hay horarios activos para ese día.";
+            return;
+        }
+
+        var inicioDia = nuevaFecha.Date;
+        var finDia = inicioDia.AddDays(1);
+
+        var citasOcupadas = await db.Citas
+            .AsNoTracking()
+            .Include(c => c.Servicio)
+            .Where(c =>
+                c.CitaId != citaActual.CitaId &&
+                c.FechaHoraInicio >= inicioDia &&
+                c.FechaHoraInicio < finDia &&
+                (c.Estado == "Pendiente" ||
+                 c.Estado == "Aceptada" ||
+                 c.Estado == "Pospuesta"))
+            .ToListAsync();
+
+        foreach (var bloque in bloques)
+        {
+            var hora = bloque.HoraInicio;
+
+            while (hora.AddMinutes(citaActual.Servicio.DuracionMinutos)
+                   <= bloque.HoraFin)
+            {
+                var inicioPropuesto = nuevaFecha.Date.Add(hora.ToTimeSpan());
+                var finPropuesto = inicioPropuesto.AddMinutes(
+                    citaActual.Servicio.DuracionMinutos);
+
+                bool yaPaso = inicioPropuesto <= DateTime.Now;
+
+                bool ocupado = citasOcupadas.Any(c =>
+                    inicioPropuesto <
+                        c.FechaHoraInicio.AddMinutes(c.Servicio.DuracionMinutos) &&
+                    c.FechaHoraInicio < finPropuesto);
+
+                if (!yaPaso && !ocupado)
+                    horasPosponerDisponibles.Add(hora.ToString("HH:mm"));
+
+                hora = hora.AddMinutes(citaActual.Servicio.DuracionMinutos);
+            }
+        }
+
+        horasPosponerDisponibles = horasPosponerDisponibles
+            .Distinct()
+            .OrderBy(h => TimeOnly.Parse(h))
+            .ToList();
+
+        mensajeHorasPosponer = horasPosponerDisponibles.Count == 0
+            ? "No hay horas disponibles para esa fecha."
+            : "Selecciona una hora disponible.";
+    }
+
+
+
+
+
+
+
+
 }
