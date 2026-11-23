@@ -1,6 +1,9 @@
 ﻿@page "/crear-cuenta-local"
 @using System.ComponentModel.DataAnnotations
 @using Microsoft.AspNetCore.Identity
+
+@using Microsoft.AspNetCore.Components
+
 @inject UserManager<IdentityUser> UserManager
 @inject IWebHostEnvironment Environment
 
@@ -40,8 +43,8 @@ else
 }
 
 @code {
-    private Registro datos = new();
-    private bool creada;
+    [SupplyParameterFromForm]
+    private Registro datos { get; set; } = new(); private bool creada;
     private string? error;
 
     private async Task CrearCuenta()
